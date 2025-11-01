@@ -1,0 +1,86 @@
+name: AI Code Review
+on: [push, pull_request]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    outputs:
+      approved: ${{ steps.review.outputs.approved }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: AI Code Review
+        id: review
+        run: |
+          # Get the diff safely
+          if [ "${{ github.event_name }}" = "push" ]; then
+            DIFF=$(git diff HEAD~1 2>/dev/null || git show --format= --name-only)
+          else
+            DIFF=$(git diff HEAD~1 2>/dev/null || git show --format= --name-only)
+          fi
+
+          if [ -n "$DIFF" ]; then
+            echo "🔍 Submitting changes for review..."
+            # Escape newlines and quotes for JSON
+            SAFE_DIFF=$(echo "$DIFF" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+
+            # Submit for review and wait for approval
+            RESPONSE=$(curl -s -X POST "http://84.247.166.227:3000/pre-commit-review" \
+              -H "Content-Type: application/json" \
+              -d "{\"diff\": $SAFE_DIFF, \"repoUrl\": \"https://github.com/${{ github.repository }}\"}")
+
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to submit for review"
+              echo "approved=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+
+            echo "⏳ Review submitted. Waiting for approval..."
+            echo "📋 Check your dashboard at http://localhost:5173 to approve or reject the changes"
+
+            # Wait for approval by polling the API
+            APPROVED=false
+            MAX_WAIT=300  # 5 minutes max wait
+            WAIT_COUNT=0
+
+            while [ $WAIT_COUNT -lt $MAX_WAIT ] && [ "$APPROVED" = "false" ]; do
+              sleep 10
+              WAIT_COUNT=$((WAIT_COUNT + 10))
+
+              echo "Still waiting for approval... ($WAIT_COUNT seconds elapsed)"
+
+              # Poll the approval status via Socket.IO simulation
+              APPROVAL_STATUS=$(curl -s -X POST "http://84.247.166.227:3000/check-approval" \
+                -H "Content-Type: application/json" \
+                -d "{"repoPath": "${{ github.repository }}"}")
+              echo "Approval status check: $APPROVAL_STATUS"
+              if echo "$APPROVAL_STATUS" | grep -q '"approved":true'; then
+                APPROVED=true
+                echo "✅ Changes approved!"
+              fi
+            done
+
+            if [ "$APPROVED" = "true" ]; then
+              echo "approved=true" >> $GITHUB_OUTPUT
+            else
+              echo "⏰ Approval timeout or rejected"
+              echo "approved=false" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          else
+            echo "✅ No changes to review"
+            echo "approved=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          API_KEY: ${{ secrets.AI_REVIEW_API_KEY }}
+
+  push-changes:
+    needs: review
+    runs-on: ubuntu-latest
+    if: needs.review.outputs.approved == 'true'
+    steps:
+      - name: Push Approved Changes
+        run: |
+          echo "✅ Changes approved! Pushing to repository..."
+          # The actual push happens here when approved
