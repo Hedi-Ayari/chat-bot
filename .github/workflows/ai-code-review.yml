@@ -10,6 +10,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
+
       - name: AI Code Review
         id: review
         run: |
@@ -25,7 +26,7 @@ jobs:
             # Escape newlines and quotes for JSON
             SAFE_DIFF=$(echo "$DIFF" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
 
-            # Submit for review and wait for approval
+            # Submit for review
             RESPONSE=$(curl -s -X POST "http://84.247.166.227:3000/pre-commit-review" \
               -H "Content-Type: application/json" \
               -d "{\"diff\": $SAFE_DIFF, \"repoUrl\": \"https://github.com/${{ github.repository }}\"}")
@@ -39,7 +40,7 @@ jobs:
             echo "⏳ Review submitted. Waiting for approval..."
             echo "📋 Check your dashboard at http://localhost:5173 to approve or reject the changes"
 
-            # Wait for approval by polling the API
+            # Wait for approval by polling with GET requests
             APPROVED=false
             MAX_WAIT=300  # 5 minutes max wait
             WAIT_COUNT=0
@@ -50,11 +51,10 @@ jobs:
 
               echo "Still waiting for approval... ($WAIT_COUNT seconds elapsed)"
 
-              # Poll the approval status via Socket.IO simulation
-              APPROVAL_STATUS=$(curl -s -X POST "http://84.247.166.227:3000/check-approval" \
-                -H "Content-Type: application/json" \
-                -d "{"repoPath": "${{ github.repository }}"}")
+              # ✅ Fixed: Use GET request to check approval status
+              APPROVAL_STATUS=$(curl -s "http://84.247.166.227:3000/check-approval/${{ github.repository }}")
               echo "Approval status check: $APPROVAL_STATUS"
+
               if echo "$APPROVAL_STATUS" | grep -q '"approved":true'; then
                 APPROVED=true
                 echo "✅ Changes approved!"
